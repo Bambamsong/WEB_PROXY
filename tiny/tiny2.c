@@ -11,9 +11,9 @@
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize, char *method);
+void serve_static(int fd, char *filename, int filesize);
 void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs, char *method);
+void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
 
@@ -66,7 +66,7 @@ void doit(int fd) // 여기서 fd는 connfd !
     printf("Requst headers: \n");
     printf("%s", buf); // 요청된 라인을 printf로 보여줌 (최초 요청라인: GET / HTTP/1.1)
     sscanf(buf, "%s %s %s", method, uri, version); // 문자배열 buf에서 데이터를 읽는다. 읽은것을 각각의 배열에 저장
-    if (strcasecmp(method, "GET") && strcasecmp(method, "HEAD")){ // method 문자열이 "GET" 과 일치하는지 확인
+    if (strcasecmp(method, "GET")){ // method 문자열이 "GET" 과 일치하는지 확인
       clienterror(fd, method, "501", "Not implemented", "Tiny does not implement thes method");
       return;
     }
@@ -88,14 +88,14 @@ void doit(int fd) // 여기서 fd는 connfd !
         clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
         return;
       }
-      serve_static(fd, filename, sbuf.st_size, method); // 정적 파일을 클라이언트에게 제공하는 함수
+      serve_static(fd, filename, sbuf.st_size); // 정적 파일을 클라이언트에게 제공하는 함수
     }
     else { /* 동적 콘텐츠 서빙 */
       if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
         clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
         return;
       }
-      serve_dynamic(fd, filename, cgiargs, method); // 동적 파일을 클라이언트에게 제공하는 함수
+      serve_dynamic(fd, filename, cgiargs); // 동적 파일을 클라이언트에게 제공하는 함수
     }
 
 }
@@ -173,7 +173,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
   }
 }
 /* 정적 컨텐츠를 클라이언트에 서비스 */
-void serve_static(int fd, char *filename, int filesize ,char *method) {
+void serve_static(int fd, char *filename, int filesize) {
   int srcfd;
   char *srcp, filetpye[MAXLINE], buf[MAXBUF];
 
@@ -189,10 +189,6 @@ void serve_static(int fd, char *filename, int filesize ,char *method) {
   printf("%s", buf);
 
   /* 클라이언트에 응답 바디 보내기 */
-  
-  if (!strcasecmp(method, "HEAD")) {
-    return; 
-
   srcfd = Open(filename, O_RDONLY, 0); // filename 이라는 파일을 읽기 전용으로 연다
   // srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0); // srcfd라는 파일디스크립터를 메모리 매핑할 예정이다
   srcp = (char *)Malloc(filesize);
@@ -201,8 +197,6 @@ void serve_static(int fd, char *filename, int filesize ,char *method) {
   Rio_writen(fd, srcp, filesize);
   // Munmap(srcp, filesize); // 위에서 메모리 매핑 해준 파일디스크립터를 매핑해제 해주는행위
   free(srcp);
-
-  
 }
 
 /* 파일 이름에서 파일 유형(확장자)찾기 */
@@ -217,7 +211,7 @@ void get_filetype(char *filename, char *filetype) {
 }
 
 /* 동적컨텐츠를 클라이언트에 제공 */
-void serve_dynamic(int fd, char *filename, char *cgiargs, char *method) {
+void serve_dynamic(int fd, char *filename, char *cgiargs) {
   char buf[MAXLINE], *emptylist[] = { NULL };
 
   // 클라이언트에 성공을 알려주는 응답 라인을 보내는 것으로 시작
@@ -225,8 +219,6 @@ void serve_dynamic(int fd, char *filename, char *cgiargs, char *method) {
   Rio_writen(fd, buf, strlen(buf));
   sprintf(buf, "Server: Tiny Web Server\r\n");
   Rio_writen(fd, buf, strlen(buf));
-
-
 
   if (Fork() == 0) { /* Child */
     /* Real server would set all CGI vars here */
