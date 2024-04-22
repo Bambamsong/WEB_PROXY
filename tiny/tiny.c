@@ -37,7 +37,11 @@ int main(int argc, char **argv) {
   listenfd = Open_listenfd(argv[1]);      //  인자로 받은 PORT(argv[1])에 연결 요청을 받을 준비가 된 듣기 식별자를 리턴
   while (1) {                             //  while(1) : C에서 무한루프를 생성하는 일반적인 방법 
     clientlen = sizeof(clientaddr);
-    connfd = Accept(listenfd, (SA *)&clientaddr,  // Accept : 연결 식별자를 리턴하는 함수
+    // 서버는 accept함수를 호출해서 클라이언트로부터의 연결 요청을 기다림
+    // client 소켓은 server 소켓의 주소를 알고 있으니까
+    // client에서 server로 넘어올 때 add정보를 가지고 올 것이라고 가정
+    // accept 함수는 연결되면 식별자 connfd를 리턴
+    connfd = Accept(listenfd, (SA *)&clientaddr,  // 듣기식별자, 소켓 주소 구조체의 주소, 주소(소켓 구조체)
                     &clientlen);  // line:netp:tiny:accept
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, // 여기서 hostname과 port는 버퍼임
                 0); // 반복적으로 연결 요청 접수
@@ -48,7 +52,7 @@ int main(int argc, char **argv) {
 }
 
 /* 한 개의 HTTP 트랜잭션을 처리 */
-void doit(int fd)
+void doit(int fd) // 여기서 fd는 connfd !
 {
     int is_static;
     struct stat sbuf;
@@ -60,7 +64,7 @@ void doit(int fd)
     Rio_readinitb(&rio, fd); // rio_t 구조체를 초기화하여 rio변수가 fd 에서 안전하게 읽을수 있도록 함
     Rio_readlineb(&rio, buf, MAXLINE); // buf : 읽은 데이터를 저장할 버퍼
     printf("Requst headers: \n");
-    printf("%s", buf);
+    printf("%s", buf); // 요청된 라인을 printf로 보여줌 (최초 요청라인: GET / HTTP/1.1)
     sscanf(buf, "%s %s %s", method, uri, version); // 문자배열 buf에서 데이터를 읽는다. 읽은것을 각각의 배열에 저장
     if (strcasecmp(method, "GET")){ // method 문자열이 "GET" 과 일치하는지 확인
       clienterror(fd, method, "501", "Not implemented", "Tiny does not implement thes method");
@@ -69,7 +73,7 @@ void doit(int fd)
     read_requesthdrs(&rio); // 'rio'sms RIO패키지를 사용하여 안전하게 한 줄씩 읽어들이는 구조체 , 이 구조체를 사용하여 요청 헤더를 읽어옴
 
     /* GET요청으로부터 URI를 분석하고 추출 */
-    is_static = parse_uri(uri, filename, cgiargs);
+    is_static = parse_uri(uri, filename, cgiargs); // 1 이면 static
       // uri : 파싱할 URI를 나타내는 문자열
       // filename : 추출된 파일이름이 저장될 문자열
       // cgiargs : 추출된 cgi인자가 저장될 문자열
@@ -80,7 +84,7 @@ void doit(int fd)
 
     /* 정적 콘텐츠를 서빙할지 동적 컨텐츠를 서빙할지 여부를 확인하는 조건문 */
     if (is_static) { /* 정적 콘텐츠 서빙 */
-      if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) { // S_ISREG : 파일의 모드를 확인(일반모드인지), S_IXUSR : 실행가능한 파일 여부 확인
+      if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) { // S_ISREG : 파일의 모드를 확인(일반모드인지), S_IXUSR : 실행가능한 파일 여부 확인, 읽기 권한(S_IRUSR)을 가지고 있는지 판별
         clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
         return;
       }
@@ -124,12 +128,20 @@ void read_requesthdrs(rio_t *rp) {
   char buf[MAXLINE];
 
   Rio_readlineb(rp, buf, MAXLINE); // rp로 부터 데이터를 읽어서 buf에 저장
+  // 한줄을 읽어들인다('\n'만나면 break되는 식)
+  // strcmp(str1,str2) 같은 경우 0을 반환 -> 이 경우만 탈출
+  // buf가 '\r\n'이 되는 경우는 모든 줄을 읽고 나서 마지막 줄에 도착한 경우이다.
+  // 헤더의 마지막 줄은 비어있다
   while(strcmp(buf, "\r\n")) { // 요청헤더가 끝날때까지 계속 헤더를 읽는다
     Rio_readlineb(rp, buf, MAXLINE);
     printf("%s", buf);
   }
   return;
 }
+
+
+// Tiny는 정적 컨텐츠를 위한 홈 디렉토리가 자신의 현재 디렉토리이고,
+// 실행파일의 홈 디렉토리는 /cgi-bin이라고 가정한다.
 
 /* parse_uri 함수 */
 int parse_uri(char *uri, char *filename, char *cgiargs) {
@@ -141,7 +153,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
     strcpy(filename, ".");      // filename에 . 복사 = 현재 디렉토리를 나타냄
     strcat(filename, uri);      // filename에 uri 복사
     if (uri[strlen(uri)-1] == '/') // 문자열의 마지막 문자 가져옴, 그값이 / 이면 = uri가 /로 끝나는 경우
-        strcat(filename, "home.html"); // home.html을 파일이름에 추가
+        strcat(filename, "home.html"); // home.html을 파일이름에 추가 -> 11.10과제 adder.html로 변경
     return 1;
   }
   /* 동적 콘텐츠 */
@@ -178,10 +190,13 @@ void serve_static(int fd, char *filename, int filesize) {
 
   /* 클라이언트에 응답 바디 보내기 */
   srcfd = Open(filename, O_RDONLY, 0); // filename 이라는 파일을 읽기 전용으로 연다
-  srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0); // srcfd라는 파일디스크립터를 메모리 매핑할 예정이다
+  // srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0); // srcfd라는 파일디스크립터를 메모리 매핑할 예정이다
+  srcp = (char *)Malloc(filesize);
+  Rio_readn(srcfd, srcp, filesize);
   Close(srcfd); // 해당파일디스크립터를 닫는 행위. 성공적으로 닫으면 0 반환
   Rio_writen(fd, srcp, filesize);
-  Munmap(srcp, filesize); // 위에서 메모리 매핑 해준 파일디스크립터를 매핑해제 해주는행위
+  // Munmap(srcp, filesize); // 위에서 메모리 매핑 해준 파일디스크립터를 매핑해제 해주는행위
+  free(srcp);
 }
 
 /* 파일 이름에서 파일 유형(확장자)찾기 */
@@ -191,6 +206,7 @@ void get_filetype(char *filename, char *filetype) {
   else if (strstr(filename, ".gif")) strcpy(filetype, "image/gif");
   else if (strstr(filename, ".png")) strcpy(filetype, "image/png");
   else if (strstr(filename, ".jpg")) strcpy(filetype, "image/jpeg");
+  else if (strstr(filename, ".mp4")) strcpy(filetype, "video/mp4");
   else strcpy(filetype, "text/plain");
 }
 
@@ -198,7 +214,7 @@ void get_filetype(char *filename, char *filetype) {
 void serve_dynamic(int fd, char *filename, char *cgiargs) {
   char buf[MAXLINE], *emptylist[] = { NULL };
 
-  /* Return first part of HTTP response */
+  // 클라이언트에 성공을 알려주는 응답 라인을 보내는 것으로 시작
   sprintf(buf, "HTTP/1.0 200 OK\r\n");
   Rio_writen(fd, buf, strlen(buf));
   sprintf(buf, "Server: Tiny Web Server\r\n");
@@ -206,6 +222,12 @@ void serve_dynamic(int fd, char *filename, char *cgiargs) {
 
   if (Fork() == 0) { /* Child */
     /* Real server would set all CGI vars here */
+    // 이때 부모 프로세스는 자식의 PID(Process ID)를, 자식 프로세스는 0을 반환받는다.
+
+    // Real server would set all CGI vars here(실제 서버는 여기서 다른 CGI 환경변수도 설정)
+
+    // QUERY_STRING 환경변수를 요청 URI의 CGI 인자들을 넣겠소. 
+    // 세 번째 인자는 기존 환경 변수의 유무에 상관없이 값을 변경하겠다면 1, 아니라면 0
     setenv("QUERY_STRING", cgiargs, 1);
     Dup2(fd, STDOUT_FILENO);
     Execve(filename, emptylist, environ);
