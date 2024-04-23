@@ -7,7 +7,7 @@
 void doit(int connfd);
 void parse_uri(char *uri,char *hostname,char *path,int *port);
 void build_the_header(char *http_header,char *hostname,char *path,int port,rio_t *client_rio);
-int connect_endServer(char *hostname,int port);
+int connect_endServer(char *hostname,int port,char *http_header);
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr =
@@ -76,12 +76,11 @@ void doit(int connfd){
   build_the_header(endserver_http_header, hostname, filepath, port, &rio);
 
   /* 최종 서버에 연결하기 */
-  end_serverfd = connect_endServer(hostname, port);
+  end_serverfd = connect_endServer(hostname, port, endserver_http_header);
   if (end_serverfd<0) {
     printf("connection failed\n");
     return;
   }
-  // end_serverfd = Open_clientfd(hostname, (char)port);
 
   Rio_readinitb(&server_rio, end_serverfd);
 
@@ -135,7 +134,7 @@ void build_the_header(char * http_header, char * hostname, char * filepath, int 
     return ;
 }
 /*Connect toa the end server*/
-inline int connect_endServer(char *hostname,int port){
+inline int connect_endServer(char *hostname,int port,char *http_header){
     char portStr[100];
     sprintf(portStr,"%d",port);
     return Open_clientfd(hostname,portStr);

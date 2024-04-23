@@ -10,19 +10,18 @@ int main(void) {
     int n1=0, n2=0;
 
     /* Extract the two arguments */
-    if ((buf = getenv("QUERY_STRING")) != NULL) {
+    if ((buf = getenv("QUERY_STRING")) != NULL) { // cgiargs값이 buf에 들어감
 	    first = strchr(buf, 'first');
-      second = strchr(buf, 'second');
-	    *first = '\0';
-      *second = '\0';
+        second = strchr(buf, 'second');
+	    *first = '\0'; 
+        *second = '\0';
 	    strcpy(arg1, first+2);
 	    strcpy(arg2, second+2);
 	    n1 = atoi(arg1);
-  	  n2 = atoi(arg2);
+  	    n2 = atoi(arg2);
     }
-
     /* Make the response body */
-    sprintf(content, "QUERY_STRING=%s", buf);
+    sprintf(content, "QUERY_STRING=");
     sprintf(content, "Welcome to add.com: ");
     sprintf(content, "%sTHE Internet addition portal.\r\n<p>", content);
     sprintf(content, "%sThe answer is: %d + %d = %d\r\n<p>", 
