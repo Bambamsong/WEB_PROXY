@@ -55,29 +55,29 @@ int main(int argc, char **argv) {
 void doit(int fd) // 여기서 fd는 connfd !
 {
     int is_static;
-    struct stat sbuf;
+    struct stat sbuf; // 파일정보를 저장하는 구조체
     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
     char filename[MAXLINE] , cgiargs[MAXLINE];
     rio_t rio;
 
     /* 요청 라인을 읽기 */
     Rio_readinitb(&rio, fd); // rio_t 구조체를 초기화하여 rio변수가 fd 에서 안전하게 읽을수 있도록 함
-    Rio_readlineb(&rio, buf, MAXLINE); // buf : 읽은 데이터를 저장할 버퍼
-    printf("Requst headers: \n");
+    Rio_readlineb(&rio, buf, MAXLINE); // 1 rio_t구조체에서 데이터를 읽는다. 2 한 줄씩 읽는다. 3 읽을줄을 버퍼에 저장한다 4. 버퍼에 저장된 바이트 수를 반환한다.
+    printf("Reqeust headers: \n");
     printf("%s", buf); // 요청된 라인을 printf로 보여줌 (최초 요청라인: GET / HTTP/1.1)
     sscanf(buf, "%s %s %s", method, uri, version); // 문자배열 buf에서 데이터를 읽는다. 읽은것을 각각의 배열에 저장
     if (strcasecmp(method, "GET")){ // method 문자열이 "GET" 과 일치하는지 확인
       clienterror(fd, method, "501", "Not implemented", "Tiny does not implement thes method");
       return;
     }
-    read_requesthdrs(&rio); // 'rio'sms RIO패키지를 사용하여 안전하게 한 줄씩 읽어들이는 구조체 , 이 구조체를 사용하여 요청 헤더를 읽어옴
+    read_requesthdrs(&rio); // 'rio'는 RIO패키지를 사용하여 안전하게 한 줄씩 읽어들이는 구조체 , 이 구조체를 사용하여 요청 헤더를 읽어옴
 
     /* GET요청으로부터 URI를 분석하고 추출 */
     is_static = parse_uri(uri, filename, cgiargs); // 1 이면 static
       // uri : 파싱할 URI를 나타내는 문자열
       // filename : 추출된 파일이름이 저장될 문자열
       // cgiargs : 추출된 cgi인자가 저장될 문자열
-    if (stat(filename, &sbuf) < 0) {
+    if (stat(filename, &sbuf) < 0) { // stat : 파일의 상태를 검사하는 함수(성공하면 0 실패하면 -1), filename : 파일의 경로를 나타내는 문자열 , sbuf : 파일의 상태 정보가 저장될 구조체에 대한 포인터
       clienterror(fd, filename, "404", "Not found", "Tiny couldn't find this file");
       return;
     }
@@ -151,24 +151,25 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
   if (!strstr(uri, "cgi-bin")){ // uri 에서 cgi-bin이 없으면 실행해라
     strcpy(cgiargs, "");        // cgiargs에 공백복사 = cgiargs 버퍼 초기화
     strcpy(filename, ".");      // filename에 . 복사 = 현재 디렉토리를 나타냄
-    strcat(filename, uri);      // filename에 uri 복사
+    strcat(filename, uri);      // filename에 uri 이어서 붙혀준다.
     if (uri[strlen(uri)-1] == '/') // 문자열의 마지막 문자 가져옴, 그값이 / 이면 = uri가 /로 끝나는 경우
         strcat(filename, "home.html"); // home.html을 파일이름에 추가 -> 11.10과제 adder.html로 변경
     return 1;
   }
   /* 동적 콘텐츠 */
+  // uri 예시 : dynamic: /cgi-bin/adder?first=1213&second=1232
   else {
-    ptr = index(uri, '?');
+    ptr = index(uri, '?'); // ? 의 위치를 가리킨다
     if (ptr) {
       strcpy(cgiargs, ptr+1); // ? 다음위치부터 가리켜야하니까 ptr+1
-      *ptr = '\0';
+      *ptr = '\0';            // ? 위치에 \0 을 넣는다
     }
     else {
       strcpy(cgiargs, "");
     }
     //윗 과정 끝나면
     strcpy(filename, ".");
-    strcat(filename, uri);
+    strcat(filename, uri); //이어붙이는 함수, 파일네임에 uri 이어 붙이기(이때 ? => \0로 변환되어있으
     return 0;
   }
 }
@@ -201,6 +202,7 @@ void serve_static(int fd, char *filename, int filesize) {
 
 /* 파일 이름에서 파일 유형(확장자)찾기 */
 // ex) 텍스트파일, 이미지파일, html파일 등
+// 파일네임을 가지고 확인 -> 파일타입에 저장
 void get_filetype(char *filename, char *filetype) {
   if (strstr(filename, ".html")) strcpy(filetype, "text/html");
   else if (strstr(filename, ".gif")) strcpy(filetype, "image/gif");
@@ -212,9 +214,10 @@ void get_filetype(char *filename, char *filetype) {
 
 /* 동적컨텐츠를 클라이언트에 제공 */
 void serve_dynamic(int fd, char *filename, char *cgiargs) {
-  char buf[MAXLINE], *emptylist[] = { NULL };
+  char buf[MAXLINE], *emptylist[] = { NULL }; // 포인터배열(포인터를 인자로 갖는 배열)의 원소는 한개이고 그 값은 NULL이다
 
   // 클라이언트에 성공을 알려주는 응답 라인을 보내는 것으로 시작
+  // Rio_writen 을 하게 되면 buf가 소실됌! 그래서 다시 데이터를 넣어줌
   sprintf(buf, "HTTP/1.0 200 OK\r\n");
   Rio_writen(fd, buf, strlen(buf));
   sprintf(buf, "Server: Tiny Web Server\r\n");
