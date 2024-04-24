@@ -8,7 +8,7 @@ void doit(int clientfd);
 void read_requesthdrs(rio_t *rp, void *buf, int serverfd, char *hostname, char *port);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
 void parse_uri(char *uri, char *hostname, char *port, char *path);
-
+void *thread(void *vargp);
 /* You won't lose style points for including this long line in your code */
 static const int is_local_test = 1; // 테스트 환경에 따른 도메인&포트 지정을 위한 상수 (0 할당 시 도메인&포트가 고정되어 외부에서 접속 가능)
 static const char *user_agent_hdr =
@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
   int listenfd, *clientfd;
   socklen_t clientlen;
   char client_hostname[MAXLINE], client_port[MAXLINE];
-
+  pthread_t tid;
   struct sockaddr_storage clientaddr;
   if (argc != 2){
     fprintf(stderr, "usage :%s <port> \n", argv[0]);
@@ -37,19 +37,20 @@ int main(int argc, char **argv) {
 
     Getnameinfo((SA*)&clientaddr, clientlen, client_hostname, MAXLINE, client_port, MAXLINE, 0);
     printf("Accepted connection from (%s, %s).\n", client_hostname, client_port);
-    
-    doit(clientfd);
-    Close(clientfd);
-    free(clientfd);
+    Pthread_create(&tid, NULL, thread, clientfd); // Concurrent 프록시
+
   }
   
   return 0;
 }
-
-
-
-
-
+void *thread(void *vargp){
+    int clientfd = *((int *)vargp);
+    Pthread_detach(pthread_self());
+    Free(vargp);
+    doit(clientfd);
+    Close(clientfd);
+    return NULL;
+}
 
 
 
@@ -74,7 +75,7 @@ void doit(int clientfd){
     sprintf(request_buf, "%s %s %s\r\n", method, path, "HTTP/1.0");
 
     // 지원하지 않는 method인 경우 예외 처리
-    if (strcasemcp(method, "GET") && strcasecmp(method, "HEAD")) {
+    if (strcasecmp(method, "GET") && strcasecmp(method, "HEAD")) {
         clienterror(clientfd, method, "501", "Not implemented", "Tiny does not implement this method");
         return;
     }
@@ -98,7 +99,7 @@ void doit(int clientfd){
     while (strcmp(response_buf, "\r\n")){
         Rio_readlineb(&response_rio, response_buf, MAXLINE);
         if (strstr(response_buf, "Content_lenght")) // Response Body 수신에 사용하기 위해 Content-length 저장
-            content_length = atoi(scrchr(response_buf, ":") + 1);
+            content_length = atoi(strchr(response_buf, ":") + 1);
         Rio_writen(clientfd, response_buf, strlen(response_buf));
     }
     
@@ -187,4 +188,27 @@ void read_requesthdrs(rio_t *request_rio, void *request_buf, int serverfd, char 
     sprintf(request_buf, "\r\n"); // 종료문
     Rio_writen(serverfd, request_buf, strlen(request_buf));
     return;
+}
+
+void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg){
+  char buf[MAXLINE], body[MAXBUF];
+  // buf : HTTP 요청이나 응답을 저장하는 데 사용
+  // body : 응답의 본문을 저장하는 데 사용
+
+  /* sprintf 함수를 사용하여 HTML형식의 오류 메세지 생성 to body */
+  sprintf(body, "<html><title>Tiny Error</title>");         // html 문서의 시작부분
+  sprintf(body, "%s<body bgcolor =""ffffff"">\r\n", body);  
+  sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
+  sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
+  sprintf(body, "%s<hr><em>The Web server</em>\r\n", body);
+  // sprintf에서 body를 계속 사용하는 이유는 호출될 때마다 이전 호출에서 저장된 것을 잃어버리기 때문
+
+  /* print the HTTP response */
+  sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
+  Rio_writen(fd, buf, strlen(buf)); // 데이터(buf)를 소켓(fd)에 정확히(strlen) 바이트 쓴다 , 데이터를 클라이언트에게 보내기 위해 사용
+  sprintf(buf, "Content-tpye: text/html\r\n");
+  Rio_writen(fd, buf, strlen(buf));
+  sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+  Rio_writen(fd, buf, strlen(buf));
+  Rio_writen(fd, body, strlen(body));
 }

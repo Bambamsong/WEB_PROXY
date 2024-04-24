@@ -4,12 +4,13 @@
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
 
+void *thread(void *vargp);
 void doit(int connfd);
 void parse_uri(char *uri,char *hostname,char *path,int *port);
 void build_the_header(char *http_header,char *hostname,char *path,int port,rio_t *client_rio);
 int connect_endServer(char *hostname,int port,char *http_header);
 
-/* You won't lose style points for including this long line in your code */
+
 static const char *user_agent_hdr =
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
     "Firefox/10.0.3\r\n";
@@ -17,10 +18,11 @@ static const char *user_agent_hdr =
 int main(int argc, char **argv) {
 
   int listenfd, connfd;
-  socklen_t clientlen;
   char hostname[MAXLINE], port[MAXLINE];
-
   struct sockaddr_storage clientaddr;
+  socklen_t clientlen;
+  pthread_t tid;
+
   if (argc != 2){
     fprintf(stderr, "usage :%s <port> \n", argv[0]);
     exit(1);
@@ -34,20 +36,32 @@ int main(int argc, char **argv) {
     Getnameinfo((SA*)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
     printf("Accepted connection from (%s, %s).\n", hostname, port);
     
-    doit(connfd);
-    Close(connfd);
+    /* Thread 추가 */
+    // 첫 번째 인자 : 새로 생성된 스레드의 ID를 저장할 포인터
+    // 두 번째 인자 : 스레드 속성 지정(보통은 NULL)
+    // 세 번째 인자 : 스레드 함수 (스레드가 진행해야할 일을 함수로 만들어 넣음)
+    // 네 번째 인자 : 스레드 함수의 매개변수 (위 함수에 넣는 인자)
+    Pthread_create(&tid, NULL, thread, (void *)connfd); 
   }
-  
   return 0;
+}
+
+void *thread(void *vargs) { 
+  int connfd = (int)vargs; // argument로 받은 것을 connfd에 넣는다
+  Pthread_detach(pthread_self());
+  doit(connfd);
+  Close(connfd); 
+  // connfd를 여러개로 만드는 이유? main 함수 while 돌 때마다 accept 쓰레드생성함수 호출되고, 
+  // 그 생성 함수에서 쓰레드함수 호출하는데 호출할 때마다 connfd가 연결됨. (클라 여러개!)
+  // 요청받으면 쓰레드 만들고, 이 쓰레드마다 connfd를 만든다. 그러면 프로세스는 하나인데 쓰레드 여러개 - 거기서 connfd쭈루룩.
+  // 그래서 main함수가 아닌 thread함수에 doit 이 있다!
 }
 
 void doit(int connfd){
   
-  int end_serverfd; /* 최종 서버 fd */
-
+  int end_serverfd;
   char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
   char endserver_http_header[MAXLINE];
-
   char hostname[MAXLINE], filepath[MAXLINE];
   int port;
 
@@ -56,20 +70,22 @@ void doit(int connfd){
     rio : client's rio
     server_rio : endserver's rio
   */
+
   Rio_readinitb(&rio, connfd);
   Rio_readlineb(&rio, buf, MAXLINE);
-  printf("버퍼 확인용 :%s\n", buf); // 나중에 지워야함
   sscanf(buf, "%s %s %s", method, uri, version); // 공백으로 구분된 3개의 문자열을 구분하여 각각에 저장
 
-  //GET http://hostname:port/path HTTP/1.0
+  // buf = GET http://hostname:port/path HTTP/1.0 의 형태
 
   if (strcasecmp(method, "GET")) {
     printf("Proxy does not implement the method");
     return;
   }
 
-  /* parse the uri to get hostname, filepath(filename), port */
-  // http://hostname:port/path
+  /* 
+    uri 를 hostname, filepath(filename), port로 파싱하기 
+    uri = http://hostname:port/path 의 형태
+  */
   parse_uri(uri, hostname, filepath, &port);
 
   /* 최종 서버에 전송될 http header 만들기 */
@@ -83,7 +99,6 @@ void doit(int connfd){
   }
 
   Rio_readinitb(&server_rio, end_serverfd);
-
   /* 최종 서버에 http header 'write' */
   Rio_writen(end_serverfd, endserver_http_header, strlen(endserver_http_header));
 
@@ -140,24 +155,24 @@ inline int connect_endServer(char *hostname,int port,char *http_header){
     return Open_clientfd(hostname,portStr);
 }
 
-/*parse the uri to get hostname,file path ,port*/
+
 void parse_uri(char *uri,char *hostname,char *path,int *port)
 {
   // http://hostname:port/path
-    *port = 80;
+    *port = 80; // 초기값 기본 80 으로 지정
     char* pos = strstr(uri,"//");
 
     pos = pos!=NULL? pos+2:uri;
 
     char*pos2 = strstr(pos,":");
-    if(pos2!=NULL)// : 있을때
+    if(pos2!=NULL)  // : 있을때
     {   
         *pos2 = '\0';
-        // pos = hostname\0  port  /path
+        // pos = hostname\0port/path 의 형태
         sscanf(pos,"%s",hostname);
         sscanf(pos2+1,"%d%s",port,path);
     }
-    else // : 없을때
+    else// : 없을때
     {   // pos = hostname/path
         pos2 = strstr(pos,"/"); // *pos2 = / 
         if(pos2!=NULL)
