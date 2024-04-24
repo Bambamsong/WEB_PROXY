@@ -204,6 +204,7 @@ void serve_static(int fd, char *filename, int filesize ,char *method) {
 
   
 }
+}
 
 /* 파일 이름에서 파일 유형(확장자)찾기 */
 // ex) 텍스트파일, 이미지파일, html파일 등
