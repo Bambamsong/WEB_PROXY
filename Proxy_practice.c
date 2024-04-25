@@ -5,12 +5,20 @@
 #define MAX_OBJECT_SIZE 102400
 #define LRU_MAGIC_NUMBER 9999
 #define CACHE_OBJS_COUNT 10
+
 void *thread(void *vargp);
 void doit(int connfd);
 void parse_uri(char *uri,char *hostname,char *path,int *port);
 void build_the_header(char *http_header,char *hostname,char *path,int port,rio_t *client_rio);
 int connect_endServer(char *hostname,int port,char *http_header);
 
+// 캐시에서 추가된 함수
+void cache_init();
+int cache_find(char *url);
+void cache_uri(char *uri, char *buf);
+
+void readerPre(int i);
+void readerAfter(int i);
 
 
 static const char *user_agent_hdr =
@@ -38,7 +46,7 @@ typedef struct
 
 typedef struct
 {
-  cache_block cacheobjs[CACHE_OBJS_COUNT];  // ten cache blocks
+  cache_block cacheobjs[10];  // ten cache blocks
   int cache_num;              // 캐시(10개) 넘버 부여
 }Cache;
 
@@ -55,8 +63,6 @@ int main(int argc, char **argv) {
   socklen_t clientlen;
   pthread_t tid;
 
-  cache_init();
-  
   if (argc != 2){
     fprintf(stderr, "usage :%s <port> \n", argv[0]);
     exit(1);
@@ -149,22 +155,18 @@ void doit(int connfd){
   Rio_writen(end_serverfd, endserver_http_header, strlen(endserver_http_header));
 
   /* 최종서버로부터 응답메세지 받고 그것을 클라이언트에 전송 */
-  char cachebuf[MAX_OBJECT_SIZE];
+  char cachebuf[10];
   int sizebuf = 0;
   size_t n; // 캐시에 없을 때 찾아주는 과정
   while ((n=Rio_readlineb(&server_rio, buf, MAXLINE)) != 0) {
 
     sizebuf += n;
     /* proxy거쳐서 서버에서 response오는데, 그 응답을 저장하고 클라이언트에 보냄 */
-    if (sizebuf < MAX_OBJECT_SIZE) // 작으면 response 내용을 저장
+    if (sizebuf < 10) // 작으면 response 내용을 저장
       strcat(cachebuf, buf); // cachebuf에 but(response값) 다 이어붙혀놓음(캐시내용)
     Rio_writen(connfd, buf, n);
   }
   Close(end_serverfd);
-
-  if (sizebuf < MAX_OBJECT_SIZE) {
-    cache_uri(url_store, cachebuf); // url_store에 cachebuf 저장
-  }
 }
 
 /* 최종 서버에 전송될 헤더 만들기 */
@@ -204,7 +206,7 @@ void build_the_header(char * http_header, char * hostname, char * filepath, int 
             "\r\n");
     return ;
 }
-/*Connect to the end server*/
+/*Connect toa the end server*/
 inline int connect_endServer(char *hostname,int port,char *http_header){
     char portStr[100];
     sprintf(portStr,"%d",port);
@@ -254,7 +256,7 @@ void parse_uri(char *uri,char *hostname,char *path,int *port)
 void cache_init() {
   cache.cache_num = 0; // 맨 처음이니까
   int i;
-  for (i=0; i<CACHE_OBJS_COUNT; i++) {
+  for (i=0; i<10; i++) {
     cache.cacheobjs[i].LRU = 0; // LRU : 우선 순위를 미는 것, 처음이니까 0
     cache.cacheobjs[i].isEmpty = 1; // 1이 비어있다는 뜻
 
@@ -270,6 +272,27 @@ void cache_init() {
 }
 
 /* cache_find : 해당 uri가 캐쉬에 존재하는지 확인하는 작업 ---------------------------*/
+int cache_find(char *url) {
+  int i;
+  for (i=0; i<10; i++) {
+    // 읽기 작업 시작
+    readerPre(i);
+    // 캐시가 비어 있지 않고, URL이 일치하는 경우
+    if ((cache.cacheobjs[i].isEmpty == 0) && (strcmp(url, cache.cacheobjs[i].cache_url) == 0))
+      break;
+    // 읽기 작업 완료  
+    readerAfter(i);
+  }
+  // 캐시를 찾지 못한 경우
+  if (i >= 10)
+    return -1;
+  // 캐시를 찾은 경우 해당 인덱스 반환
+  return i;
+}
+/*
+  P : 세마포어를 잠그는 기능
+  V : 세마포어를 해제하는 기능
+*/
 void readerPre(int i) { // i = 해당인덱스
   // 읽기 카운트 뮤텍스 잠금
   P(&cache.cacheobjs[i].rdcntmutex);
@@ -293,36 +316,15 @@ void readerAfter(int i) {
   // 읽기 카운트 뮤텍스 해제
   V(&cache.cacheobjs[i].rdcntmutex);
 }
-int cache_find(char *url) {
-  int i;
-  for (i=0; i<CACHE_OBJS_COUNT; i++) {
-    // 읽기 작업 시작
-    readerPre(i);
-    // 캐시가 비어 있지 않고, URL이 일치하는 경우
-    if ((cache.cacheobjs[i].isEmpty == 0) && (strcmp(url, cache.cacheobjs[i].cache_url) == 0))
-      break;
-    // 읽기 작업 완료  
-    readerAfter(i);
-  }
-  // 캐시를 찾지 못한 경우
-  if (i >= CACHE_OBJS_COUNT)
-    return -1;
-  // 캐시를 찾은 경우 해당 인덱스 반환
-  return i;
-}
-/*
-  P : 세마포어를 잠그는 기능
-  V : 세마포어를 해제하는 기능
-*/
 
 
 /* 해당 uri를 캐쉬에 저장하는 작업 ------------------------------------- */
 
 int cache_eviction() { // 캐시 내보내기
-  int min = LRU_MAGIC_NUMBER;         // LRU값을 비교하기 위해 설정
+  int min = 7777;         // LRU값을 비교하기 위해 설정
   int minindex = 0;       // LRU 값이 가장 낮은 인덱스를 저장하는 변수 설정
   int i;
-  for (i=0; i<CACHE_OBJS_COUNT; i++) {  // 캐시 객체 수만큼 반복
+  for (i=0; i<10; i++) {  // 캐시 객체 수만큼 반복
     readerPre(i);         // 현재 캐시에 대한 읽기 작업 시작
     if (cache.cacheobjs[i].isEmpty == 1) {// 비어있는지 확인
       minindex = i;       // 비어있다면 최소 LRU 값을 갖는 캐시 객체의 인덱스를 i로 설정
@@ -358,7 +360,7 @@ void cache_LRU(int index) { //index 보다 작은 인덱스에 대한 LRU 업데
     writeAfter(i);
   }
   i++;
-  for (i; i<CACHE_OBJS_COUNT; i++) {
+  for (i; i<10; i++) {
     writePre(i);
     if (cache.cacheobjs[i].isEmpty == 0 && i != index) {
       cache.cacheobjs[i].LRU--; // 이미 찾은 애는 7777로 보냈으니 그 앞에있는 애들 인덱스 -1씩 내려준다
@@ -376,7 +378,7 @@ void cache_uri(char *uri, char *buf) {
   strcpy(cache.cacheobjs[i].cache_obj, buf);
   strcpy(cache.cacheobjs[i].cache_url, uri);
   cache.cacheobjs[i].isEmpty = 0;
-  cache.cacheobjs[i].LRU = LRU_MAGIC_NUMBER; // 가장 최근에 했으니 우선순위 9999
+  cache.cacheobjs[i].LRU = 7777; // 가장 최근에 했으니 우선순위 7777
   cache_LRU(i); // LRU정책에 따라 캐시 블록 업데이트하는 함수
 
   // 쓰기 작업 완료
